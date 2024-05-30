@@ -82,9 +82,47 @@ IsEKSLabel() {
     fi
 }
 
-mark_volume () {
+GetNamespaceResourceLabel () {
+    # namespace=$1
+
+    # Get all resources in the specified namespace and extract their labels
+    resource_labels=$(kubectl api-resources --verbs=list --namespaced -o name | xargs -n 1 kubectl get --show-kind --ignore-not-found --namespace="$1" -o json | \
+        jq -c '.items[] | {kind: .kind, name: .metadata.name, labels: .metadata.labels}')
+
+    # Store the labels in an array
+    readarray -t label_list <<< "$resource_labels"
+
+    arr="${label_list[@]}"
+    for a in $arr; do
+        echo $a
+    done
+}
+
+GetClusterResourceLabel () {
+    # Get all resources in the specified namespace and extract their labels
+    resource_labels=$(kubectl api-resources --namespaced=false --verbs=list -o name | xargs -n 1 kubectl get --show-kind --ignore-not-found -o json | \
+        jq -c '.items[] | {kind: .kind, name: .metadata.name, labels: .metadata.labels}')
+
+    # Store the labels in an array
+    readarray -t label_list <<< "$resource_labels"
+
+    arr="${label_list[@]}"
+    for a in $arr; do
+        echo $a
+    done
+}
+
+GetNamespace () {
     # Get list of namespaces
     namespaces=$(kubectl get namespaces -o=jsonpath='{.items[*].metadata.name}')
+    for ns in $namespaces; do
+        echo $ns
+    done
+}
+
+mark_volume () {
+    # Get list of namespaces
+    namespaces=$(GetNamespace)
 
     # Loop over each namespace
     for namespace in $namespaces; do
@@ -118,7 +156,7 @@ mark_volume () {
 
 unmark () {
     # Get list of namespaces
-    namespaces=$(kubectl get namespaces -o=jsonpath='{.items[*].metadata.name}')
+    namespaces=$(GetNamespace)
 
     # Loop over each namespace
     for namespace in $namespaces; do
@@ -142,18 +180,25 @@ unmark () {
 
 
     namespace="kube-system"
-
-    resource_labels=$(kubectl get all --namespace="$namespace" -o json | \
-        jq -c '.items[] | {kind: .kind, name: .metadata.name, labels: .metadata.labels}')
-
-    readarray -t label_list <<< "$resource_labels"
-
-    # Loop over each label and print it
-    for label_info in "${label_list[@]}"; do
+    resource_labels=$(GetNamespaceResourceLabel $namespace)
+    for label_info in $resource_labels; do
         if [[   $label_info =~ '"velero.io/exclude-from-backup":"true"' ]]; then
             echo "kubectl -n $namespace label $(echo $label_info | jq -r '.kind')/$(echo $label_info | jq -r '.name') velero.io/exclude-from-backup-"
             if [[ $isConfirmed == true ]]; then
                 kubectl -n $namespace label $(echo $label_info | jq -r '.kind')/$(echo $label_info | jq -r '.name') velero.io/exclude-from-backup-
+            fi
+        else
+            : # do nothing
+            # echo "Get this resource: $label_info"
+        fi
+    done
+
+    resource_labels=$(GetClusterResourceLabel)
+    for label_info in $resource_labels; do
+        if [[   $label_info =~ '"velero.io/exclude-from-backup":"true"' ]]; then
+            echo "kubectl label $(echo $label_info | jq -r '.kind')/$(echo $label_info | jq -r '.name') velero.io/exclude-from-backup-"
+            if [[ $isConfirmed == true ]]; then
+                kubectl label $(echo $label_info | jq -r '.kind')/$(echo $label_info | jq -r '.name') velero.io/exclude-from-backup-
             fi
         else
             : # do nothing
@@ -165,16 +210,10 @@ unmark () {
 mark_exclude () {
     # Namespace to query
     namespace="kube-system"
-
-    # Get all resources in the specified namespace and extract their labels
-    resource_labels=$(kubectl get all --namespace="$namespace" -o json | \
-        jq -c '.items[] | {kind: .kind, name: .metadata.name, labels: .metadata.labels}')
-
-    # Store the labels in an array
-    readarray -t label_list <<< "$resource_labels"
+    resource_labels=$(GetNamespaceResourceLabel $namespace)
 
     # Loop over each label and print it
-    for label_info in "${label_list[@]}"; do
+    for label_info in $resource_labels; do
         # echo "Resource Label: $label_info"
 
         if  IsSystemLabel $label_info || IsVContainerLabel $label_info || IsGKELabel $label_info || IsEKSLabel $label_info ; then
@@ -190,26 +229,34 @@ mark_exclude () {
             # echo "Get this resource: $label_info"
         fi
     done
+
+    resource_labels=$(GetClusterResourceLabel)
+    for label_info in $resource_labels; do
+
+        if  IsSystemLabel $label_info || IsVContainerLabel $label_info || IsGKELabel $label_info || IsEKSLabel $label_info ; then
+            if [[ $label_info =~ 'ingress' ]]; then
+                continue
+            fi
+            echo "kubectl label $(echo $label_info | jq -r '.kind')/$(echo $label_info | jq -r '.name') velero.io/exclude-from-backup=true"
+            if [[ $isConfirmed == true ]]; then
+                kubectl label $(echo $label_info | jq -r '.kind')/$(echo $label_info | jq -r '.name') velero.io/exclude-from-backup=true
+            fi
+        else
+            : # do nothing
+            # echo "Get this resource: $label_info"
+        fi
+    done
 }
 
 mark_origin () {
-    namespaces=$(kubectl get namespaces -o=jsonpath='{.items[*].metadata.name}')
-
-    # Loop over each namespace
+    namespaces=$(GetNamespace)
     for namespace in $namespaces; do
         if [[ "$namespace" == "velero" ]]; then
             continue
         fi
-        # Get all resources in the specified namespace and extract their labels
-        resource_labels=$(kubectl get all --namespace="$namespace" -o json | \
-            jq -c '.items[] | {kind: .kind, name: .metadata.name, labels: .metadata.labels}')
-
-        # Store the labels in an array
-        readarray -t label_list <<< "$resource_labels"
-
-        # Loop over each label and print it
-        for label_info in "${label_list[@]}"; do
-           
+        
+        resource_labels=$(GetNamespaceResourceLabel $namespace)
+        for label_info in $resource_labels; do
             kind=$(echo $label_info | jq -r '.kind')
             if [[ $kind == "" ]]; then
                 continue
@@ -218,39 +265,35 @@ mark_origin () {
             if [[ $isConfirmed == true ]]; then
                 kubectl -n $namespace label $kind/$(echo $label_info | jq -r '.name') vngcloud.vn/origin-resource=true
             fi
-            
         done
+    done
+
+    resource_labels=$(GetClusterResourceLabel)
+    for label_info in $resource_labels; do
+        kind=$(echo $label_info | jq -r '.kind')
+        if [[ $kind == "" ]]; then
+            continue
+        fi
+        echo "kubectl label $kind/$(echo $label_info | jq -r '.name') vngcloud.vn/origin-resource=true"
+        if [[ $isConfirmed == true ]]; then
+            kubectl label $kind/$(echo $label_info | jq -r '.name') vngcloud.vn/origin-resource=true
+        fi
     done
 }
 
 reset () {
-    namespaces=$(kubectl get namespaces -o=jsonpath='{.items[*].metadata.name}')
-
-    # Loop over each namespace
+    namespaces=$(GetNamespace)
     for namespace in $namespaces; do
         if [[ "$namespace" == "velero" ]]; then
             continue
         fi
-        # Get all resources in the specified namespace and extract their labels
-        resource_labels=$(kubectl get all --namespace="$namespace" -o json | \
-            jq -c '.items[] | {kind: .kind, name: .metadata.name, labels: .metadata.labels}')
+        
+        resource_labels=$(GetNamespaceResourceLabel $namespace)
 
-        # Store the labels in an array
-        readarray -t label_list <<< "$resource_labels"
-
-        # Loop over each label and print it
-        for label_info in "${label_list[@]}"; do
-            # echo "Resource Label: $label_info"
-
+        for label_info in $resource_labels; do
             if  IsSystemLabel $label_info || IsVKSMarkOriginLabel $label_info ; then
                 : # do nothing
-                # echo "Ignore resource: $label_info"
-                # echo "kubectl -n $namespace label $(echo $label_info | jq -r '.kind')/$(echo $label_info | jq -r '.name') velero.io/exclude-from-backup=true"
-                # if [[ $isConfirmed == true ]]; then
-                #     kubectl -n $namespace label $(echo $label_info | jq -r '.kind')/$(echo $label_info | jq -r '.name') velero.io/exclude-from-backup=true
-                # fi
             else
-                : # do nothing
                 kind=$(echo $label_info | jq -r '.kind')
                 if [[ $kind == "" ]]; then
                     continue
@@ -261,6 +304,22 @@ reset () {
                 fi
             fi
         done
+    done
+
+    resource_labels=$(GetClusterResourceLabel)
+    for label_info in $resource_labels; do
+        if  IsSystemLabel $label_info || IsVKSMarkOriginLabel $label_info ; then
+            : # do nothing
+        else
+            kind=$(echo $label_info | jq -r '.kind')
+            if [[ $kind == "" ]]; then
+                continue
+            fi
+            echo "kubectl delete $kind $(echo $label_info | jq -r '.name')"
+            if [[ $isConfirmed == true ]]; then
+                kubectl delete $(echo $label_info | jq -r '.kind') $(echo $label_info | jq -r '.name')
+            fi
+        fi
     done
 }
 
@@ -378,6 +437,8 @@ check () {
     mark_exclude
 }
 
+GetClusterResourceLabel
+
 opt=$1
 confirm=$2
 isConfirmed=false
@@ -417,7 +478,7 @@ check)
     echo "Usage: $0 "
     echo ""
     echo "          mark_volume         Mark all PVC volumes in pods for backup"
-    echo "          mark_exclude        Mark system resource and vContainer resource to exclude from backup"
+    echo "          mark_exclude        Mark system resource to exclude from backup"
     echo "          unmark              Unmark above"
     echo ""
     echo "          check               check total"
