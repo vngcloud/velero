@@ -437,8 +437,6 @@ check () {
     mark_exclude
 }
 
-GetClusterResourceLabel
-
 opt=$1
 confirm=$2
 isConfirmed=false
