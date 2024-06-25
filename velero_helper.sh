@@ -82,6 +82,19 @@ IsEKSLabel() {
     fi
 }
 
+IsVKSLabel() {
+    # $label_info=$1
+    if [[   $1 =~ '"app.kubernetes.io/name":"vngcloud-controller-manager"' || 
+            $1 =~ '"app":"vngcloud-controller-manager"' || 
+            $1 =~ '"app.kubernetes.io/name":"vngcloud-blockstorage-csi-driver"' || 
+            $1 =~ '"app":"vngcloud-csi-controller"' || 
+            $1 =~ '"k8s-app":"vngcloud-ingress-controller"' ]]; then
+        return 0 # true
+    else
+        return 1 # false
+    fi
+}
+
 GetNamespaceResourceLabel () {
     # namespace=$1
 
@@ -216,7 +229,7 @@ mark_exclude () {
     for label_info in $resource_labels; do
         # echo "Resource Label: $label_info"
 
-        if  IsSystemLabel $label_info || IsVContainerLabel $label_info || IsGKELabel $label_info || IsEKSLabel $label_info ; then
+        if  IsSystemLabel $label_info || IsVContainerLabel $label_info || IsGKELabel $label_info || IsEKSLabel $label_info || IsVKSLabel $label_info ; then
             if [[ $label_info =~ 'ingress' ]]; then
                 continue
             fi
@@ -233,7 +246,7 @@ mark_exclude () {
     resource_labels=$(GetClusterResourceLabel)
     for label_info in $resource_labels; do
 
-        if  IsSystemLabel $label_info || IsVContainerLabel $label_info || IsGKELabel $label_info || IsEKSLabel $label_info ; then
+        if  IsSystemLabel $label_info || IsVContainerLabel $label_info || IsGKELabel $label_info || IsEKSLabel $label_info || IsVKSLabel $label_info ; then
             if [[ $label_info =~ 'ingress' ]]; then
                 continue
             fi
